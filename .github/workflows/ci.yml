@@ -1,9 +1,15 @@
 name: CI
 
+# Runs on pull requests into main, and on main itself after a merge.
+#
+# Deliberately NOT on every branch push: with a PR flow that would run the same
+# commit twice, once for the push and once for the PR. The PR run is the one
+# branch protection gates on, so it is the one that has to exist.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
+    branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

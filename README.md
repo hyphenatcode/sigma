@@ -180,7 +180,24 @@ single-instance platform.
 CI (`.github/workflows/ci.yml`) runs the suite, the reference-dataset
 verification, the frontend typecheck and build, and builds the image — then
 renders a PDF inside it, because a missing native library only shows up at
-render time.
+render time. It runs on pull requests into `main` and on `main` after a merge.
+
+## Contributing
+
+`main` is protected: changes land through a pull request whose CI checks pass.
+
+```bash
+git switch -c fix/whatever
+# work, commit
+git push -u origin fix/whatever
+# open a PR into main; merge once Backend tests, Frontend build and
+# Docker image builds are green
+```
+
+The three required checks are exactly the CI job names: **Backend tests**,
+**Frontend build**, **Docker image builds**. Because Railway deploys from
+`main`, a check that gates the merge also gates the deploy — which is the point
+of the arrangement.
 
 ### Deploy runbook (Supabase + Railway + Vercel)
 

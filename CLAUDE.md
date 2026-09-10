@@ -46,6 +46,13 @@ There is no lint script; the typecheck is the gate.
 Regenerate the demo datasets with `.venv/bin/python sample-data/generate.py`
 (seeded, so they reproduce byte for byte).
 
+## Branching
+
+`main` is protected and deploys to production. Work on a branch and open a pull
+request; CI runs on the PR and on `main` after merge, and the three job names
+(**Backend tests**, **Frontend build**, **Docker image builds**) are the
+required checks. Do not push to `main` directly.
+
 ## Architecture
 
 Request flow for the one thing this app does:
