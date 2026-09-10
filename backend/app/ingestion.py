@@ -8,6 +8,7 @@ suggestion — the user's `confirmed_type` always wins.
 from __future__ import annotations
 
 import io
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -85,11 +86,69 @@ def parse_upload(filename: str, data: bytes) -> pd.DataFrame:
 
     frame.columns = [str(c).strip() for c in frame.columns]
     frame = _drop_unnamed_index_columns(frame)
+    frame = _convert_turkish_decimals(frame)
     if frame.columns.duplicated().any():
         duplicates = frame.columns[frame.columns.duplicated()].tolist()
         raise IngestionError(
             f"Veri setinde yinelenen sütun adları var: {', '.join(map(str, duplicates))}"
         )
+    return frame
+
+
+#: A number written the Turkish way: optional sign, digits, and a single comma
+#: as the decimal separator. Values containing a dot are deliberately excluded —
+#: "1.234,56" and "1,234.56" cannot be told apart without knowing the writer's
+#: locale, and guessing wrong would silently change someone's data by a factor
+#: of a thousand.
+_TURKISH_DECIMAL = re.compile(r"^\s*-?\d+,\d+\s*$")
+_PLAIN_INTEGER = re.compile(r"^\s*-?\d+\s*$")
+
+#: Share of non-null values that must parse before a column is converted.
+_DECIMAL_CONVERSION_THRESHOLD = 0.95
+
+
+def _convert_turkish_decimals(frame: pd.DataFrame) -> pd.DataFrame:
+    """Turn text columns of comma-decimal numbers into real numeric columns.
+
+    A Turkish-locale Excel writes "Save as CSV" with a semicolon separator and
+    a comma as the decimal separator, so a score column arrives as the strings
+    "68,52", "74,10", ... pandas reads those as text, §3.1 then classifies the
+    column as categorical, and the user can never select it as a dependent
+    variable — the single most likely upload from the target user is unusable.
+
+    Conversion is deliberately conservative: a column is only converted when
+    nearly all of its non-null values look like comma-decimal numbers and at
+    least one actually carries a comma. Anything containing a dot is left
+    alone, because separating "1.234,56" from "1,234.56" needs locale
+    knowledge we do not have.
+    """
+    for column in frame.columns:
+        series = frame[column]
+        if not (pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series)):
+            continue
+
+        non_null = series.dropna().astype(str)
+        if non_null.empty:
+            continue
+
+        decimal_like = non_null.str.match(_TURKISH_DECIMAL)
+        integer_like = non_null.str.match(_PLAIN_INTEGER)
+        parseable = (decimal_like | integer_like).mean()
+
+        # Require a real comma somewhere: a column of plain integers is already
+        # numeric as far as pandas is concerned, so there is nothing to fix.
+        if parseable < _DECIMAL_CONVERSION_THRESHOLD or not decimal_like.any():
+            continue
+
+        converted = pd.to_numeric(
+            series.astype(str).str.strip().str.replace(",", ".", regex=False),
+            errors="coerce",
+        )
+        # Do not trade away data: only accept the conversion if it preserves at
+        # least as many populated cells as the original column had.
+        if converted.notna().sum() >= series.notna().sum() * _DECIMAL_CONVERSION_THRESHOLD:
+            frame[column] = converted
+
     return frame
 
 

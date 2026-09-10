@@ -154,6 +154,21 @@ cd backend && ../.venv/bin/python scripts/verify_reference_datasets.py --llm
 With `--llm` it reports, per analysis, whether the generated text passed §3.6
 validation or was rejected and replaced — and prints the rejected text.
 
+## Sample data
+
+`sample-data/` holds ten thesis-sized Turkish datasets covering every analysis
+path, including the two where §3.4 overrides §3.3's first choice, an `.xlsx`
+with missing cells, and a CSV in the semicolon/cp1254/comma-decimal format a
+Turkish-locale Excel produces. `sample-data/README.md` lists which variables to
+pick for each and what it should land on. Regenerate with:
+
+```bash
+.venv/bin/python sample-data/generate.py
+```
+
+These are separate from `backend/tests/fixtures/`, which stay small and
+hand-verifiable because their job is to pin the engine's numbers.
+
 ## Correctness
 
 §5 makes correctness the highest-priority requirement, so the engine is pinned

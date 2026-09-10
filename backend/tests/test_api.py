@@ -484,3 +484,90 @@ def test_report_still_delivered_when_pdf_backend_is_unavailable(client):
         f"/api/analyses/{analysis['id']}/report/download/pdf", headers=USER
     )
     assert download.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# §3.1 — Turkish Excel exports (semicolon, cp1254, comma decimal separator)
+# ---------------------------------------------------------------------------
+
+def test_turkish_excel_csv_export_is_usable():
+    """A Turkish-locale Excel writes "68,52", not "68.52".
+
+    Left as text, the column is classified as categorical and can never be
+    chosen as a dependent variable — making the most likely upload from the
+    target user unusable.
+    """
+    from app.ingestion import detect_variables, parse_upload
+
+    # Enough distinct values that the coded-category heuristic (which suggests
+    # "ordinal" for a numeric column with few levels) does not apply.
+    scores = [60 + i * 1.37 for i in range(24)]
+    rows = "\n".join(
+        f"{i + 1};{'Çevrimiçi' if i < 12 else 'Yüz yüze'};{score:.2f}".replace(
+            f"{score:.2f}", f"{score:.2f}".replace(".", ",")
+        )
+        for i, score in enumerate(scores)
+    )
+    body = f"katilimci_no;grup;sinav_puani\n{rows}\n".encode("cp1254")
+
+    frame = parse_upload("veri.csv", body)
+    assert list(frame.columns) == ["katilimci_no", "grup", "sinav_puani"]
+    assert frame["sinav_puani"].tolist() == [round(s, 2) for s in scores]
+
+    detected = {v.column_name: v for v in detect_variables(frame)}
+    assert detected["sinav_puani"].detected_type.value == "numeric"
+    assert detected["sinav_puani"].suggested_measurement_level.value == "ratio"
+    assert detected["grup"].detected_type.value == "categorical"
+
+
+def test_decimal_conversion_leaves_genuine_text_alone():
+    from app.ingestion import parse_upload
+
+    body = (
+        "ad,not\n"
+        "Ayşe,çok iyi\n"
+        "Mehmet,orta\n"
+        "Zeynep,iyi\n"
+    ).encode("utf-8")
+    frame = parse_upload("veri.csv", body)
+    assert frame["not"].tolist() == ["çok iyi", "orta", "iyi"]
+
+
+def test_ambiguous_thousands_separators_are_not_guessed():
+    """"1.234,56" and "1,234.56" cannot be told apart without a locale, and
+    guessing wrong changes the value by a factor of a thousand. Leave both."""
+    from app.ingestion import parse_upload
+
+    import pandas as pd
+
+    body = ("id,tutar\n1,\"1.234,56\"\n2,\"2.500,00\"\n").encode("utf-8")
+    frame = parse_upload("veri.csv", body)
+    assert not pd.api.types.is_numeric_dtype(frame["tutar"])
+
+
+def test_comma_decimals_survive_the_full_pipeline():
+    """The end that matters: a comma-decimal column can be a dependent
+    variable and produce a real t statistic."""
+    import numpy as np
+
+    from app.ingestion import parse_upload
+    from app.stats.enums import MeasurementLevel, ResearchTask
+    from app.stats.pipeline import AnalysisRequest, run_analysis
+
+    rng = np.random.default_rng(7)
+    values = np.r_[rng.normal(70, 6, 30), rng.normal(78, 6, 30)].round(2)
+    lines = ["grup;puan"] + [
+        f"{'A' if i < 30 else 'B'};{str(v).replace('.', ',')}"
+        for i, v in enumerate(values)
+    ]
+    frame = parse_upload("veri.csv", "\n".join(lines).encode("cp1254"))
+
+    outcome = run_analysis(frame, AnalysisRequest(
+        task=ResearchTask.COMPARISON, dependent_variable="puan",
+        independent_variables=["grup"],
+        measurement_levels={"puan": MeasurementLevel.RATIO,
+                            "grup": MeasurementLevel.NOMINAL},
+    ))
+    assert outcome.executed_analysis_type == "independent_t_test"
+    assert outcome.result.n_total == 60
+    assert abs(outcome.result.statistics["t"]) > 1

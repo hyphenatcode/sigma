@@ -229,3 +229,48 @@ def test_assumption_note_describes_the_tests_when_they_did_run(reference):
     table = [t for t in build_tables(outcome.result)
              if t.title == "Varsayım Kontrolleri"][0]
     assert "Normallik" in table.note
+
+
+def test_welch_anova_is_not_reported_as_a_source_table(reference):
+    """Welch's test adjusts denominator df rather than partitioning sums of
+    squares, so an SS/MS source table beside Welch's F and df does not
+    reconcile: a reader recomputing F from the mean squares gets a different
+    number from the one reported."""
+    frame = reference("anova_unequal_variance.csv")
+    outcome = run_analysis(frame, AnalysisRequest(
+        task=RT.COMPARISON, dependent_variable="memnuniyet",
+        independent_variables=["bolum"],
+        measurement_levels={"memnuniyet": RATIO, "bolum": NOMINAL},
+    ))
+    assert outcome.executed_analysis_type == "welch_anova"
+    table = build_tables(outcome.result)[0]
+
+    assert table.title == "Welch ANOVA Sonuçları"
+    assert table.columns == ["Karşılaştırma", "F", "sd1", "sd2", "p", "η²"]
+    # no sum-of-squares or mean-square columns
+    assert "KT" not in table.columns
+    assert "KO" not in table.columns
+    assert len(table.rows) == 1
+    assert "kareler toplamı ayrıştırması raporlanmaz" in table.note
+    # the effect size is still reported, and its provenance explained
+    assert table.rows[0][5] == ".167"
+    assert "η²" in table.note
+
+
+def test_pooled_anova_still_gets_its_source_table(reference):
+    """The SS decomposition is correct for the pooled one-way ANOVA and must
+    stay — only Welch's variant drops it."""
+    frame = reference("anova_three_groups.csv")
+    outcome = run_analysis(frame, AnalysisRequest(
+        task=RT.COMPARISON, dependent_variable="kaygi_puani",
+        independent_variables=["sinif_duzeyi"],
+        measurement_levels={"kaygi_puani": RATIO, "sinif_duzeyi": NOMINAL},
+    ))
+    table = build_tables(outcome.result)[0]
+    assert table.columns == ["Varyansın kaynağı", "KT", "sd", "KO", "F", "p", "η²"]
+
+    # and the table reconciles: F equals MS_between / MS_within, to within the
+    # rounding the cells themselves carry (two decimals).
+    ms_between = float(table.rows[0][3])
+    ms_within = float(table.rows[1][3])
+    assert ms_between / ms_within == pytest.approx(float(table.rows[0][4]), abs=0.1)

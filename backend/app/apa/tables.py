@@ -160,6 +160,41 @@ def t_test_table(result: TestResult, number: int = 1) -> APATable:
 # ANOVA family — the conventional source table
 # ---------------------------------------------------------------------------
 
+def welch_anova_table(result: TestResult, number: int = 1) -> APATable:
+    """Welch's ANOVA reported without a sum-of-squares decomposition.
+
+    Welch's test does not partition the total sum of squares: it adjusts the
+    denominator degrees of freedom instead. Printing the ordinary SS/MS columns
+    beside Welch's F and df produces a table that does not reconcile — a reader
+    recomputing F from the mean squares gets a different number from the one
+    reported. So the source-table layout is used only for the pooled one-way
+    ANOVA, and Welch's result is reported as the test statistic itself, which is
+    also how it is conventionally written up.
+    """
+    stats = result.statistics
+    effect = result.effect_size
+    return APATable(
+        number=number,
+        title="Welch ANOVA Sonuçları",
+        columns=["Karşılaştırma", "F", "sd1", "sd2", "p", "η²"],
+        rows=[[
+            "Gruplar arası",
+            fmt(stats.get("F")),
+            fmt_df(result.df.get("df_between")),
+            fmt_df(result.df.get("df_within")),
+            fmt_p(result.p_value),
+            fmt_statistic("eta_squared", effect.value) if effect else "—",
+        ]],
+        note=(
+            f"Welch ANOVA, varyansların eşit olmadığı durumlar için paydadaki "
+            f"serbestlik derecesini düzelttiğinden kareler toplamı ayrıştırması "
+            f"raporlanmaz. η², karşılaştırılabilirlik için olağan kareler "
+            f"toplamı ayrıştırmasından hesaplanmıştır. {_effect_note(result)} "
+            f"{_SIG_NOTE}{_substitution_note(result)}"
+        ).strip(),
+    )
+
+
 def anova_table(result: TestResult, number: int = 1) -> APATable:
     spec = get_spec(result.analysis_type)
     stats = result.statistics
@@ -474,7 +509,7 @@ _GENERATORS: dict[str, Callable[[TestResult, int], APATable]] = {
     "welch_t_test": t_test_table,
     "paired_t_test": t_test_table,
     "one_way_anova": anova_table,
-    "welch_anova": anova_table,
+    "welch_anova": welch_anova_table,
     "mann_whitney_u": mann_whitney_table,
     "wilcoxon_signed_rank": wilcoxon_table,
     "kruskal_wallis": kruskal_wallis_table,
