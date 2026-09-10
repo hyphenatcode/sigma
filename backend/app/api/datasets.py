@@ -10,7 +10,6 @@ from app.api.deps import get_current_user
 from app.db import get_db
 from app.models import Dataset, User, Variable
 from app.schemas import DatasetOut, DatasetUploadOut, VariableBulkUpdateIn
-from app.stats.enums import MeasurementLevel, VariableRole
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
 

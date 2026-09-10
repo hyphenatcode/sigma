@@ -202,3 +202,30 @@ def test_substitution_note_appears_in_the_table(reference):
     table = build_tables(outcome.result)[0]
     assert "Mann-Whitney" in table.note
     assert "Normallik varsayımı" in table.note
+
+
+def test_assumption_note_does_not_describe_tests_that_never_ran(reference):
+    """Cronbach's alpha has no §3.4 assumption test; the section still appears
+    but must not claim normality tests informed the choice."""
+    frame = reference("reliability_scale.csv")
+    items = [f"madde{i}" for i in range(1, 6)]
+    outcome = run_analysis(frame, AnalysisRequest(
+        task=RT.SCALE_RELIABILITY, scale_items=items,
+        measurement_levels={item: ML.ORDINAL for item in items},
+    ))
+    table = [t for t in build_tables(outcome.result)
+             if t.title == "Varsayım Kontrolleri"][0]
+    assert "Normallik" not in table.note
+    assert "uygulanabilir bir varsayım testi bulunmamaktadır" in table.note
+
+
+def test_assumption_note_describes_the_tests_when_they_did_run(reference):
+    frame = reference("ttest_independent.csv")
+    outcome = run_analysis(frame, AnalysisRequest(
+        task=RT.COMPARISON, dependent_variable="basari_puani",
+        independent_variables=["yontem"],
+        measurement_levels={"basari_puani": RATIO, "yontem": NOMINAL},
+    ))
+    table = [t for t in build_tables(outcome.result)
+             if t.title == "Varsayım Kontrolleri"][0]
+    assert "Normallik" in table.note

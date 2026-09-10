@@ -15,6 +15,7 @@ from app.stats.pipeline import (
     UnsupportedAnalysisError,
     run_analysis,
 )
+from app.stats.results import InsufficientDataError
 
 RATIO = ML.RATIO
 NOMINAL = ML.NOMINAL
@@ -272,3 +273,40 @@ def test_outcome_serialises_for_the_api(reference):
     assert payload["executed_analysis_type"] == "independent_t_test"
     assert payload["result"]["effect_size"]["band"] == "large"
     assert payload["rule_path"]
+
+
+# ---------------------------------------------------------------------------
+# Missing data can change the group structure between §3.3 and execution
+# ---------------------------------------------------------------------------
+
+def test_group_that_vanishes_after_listwise_deletion_is_refused():
+    """§3.3 counts groups on the raw column; a group whose DV is entirely
+    missing disappears once rows are dropped. Refuse rather than comparing
+    whatever happens to be left."""
+    frame = pd.DataFrame({
+        "puan": [1.0, 2, 3, 4, 5, np.nan, np.nan, np.nan],
+        "grup": ["A"] * 5 + ["B"] * 3,
+    })
+    with pytest.raises(InsufficientDataError) as excinfo:
+        run_analysis(frame, request_for(
+            task=RT.COMPARISON, dependent_variable="puan",
+            independent_variables=["grup"],
+            measurement_levels={"puan": RATIO, "grup": NOMINAL},
+        ))
+    assert "geçerli gözlem" in excinfo.value.message_tr
+    assert "A" in excinfo.value.message_tr
+
+
+def test_partial_missing_data_still_runs():
+    """Dropping some rows is normal; only losing a whole group is fatal."""
+    frame = pd.DataFrame({
+        "puan": [10.0, 12, np.nan, 14, 11, 20, 22, 21, np.nan, 23],
+        "grup": ["A"] * 5 + ["B"] * 5,
+    })
+    outcome = run_analysis(frame, request_for(
+        task=RT.COMPARISON, dependent_variable="puan",
+        independent_variables=["grup"],
+        measurement_levels={"puan": RATIO, "grup": NOMINAL},
+    ))
+    assert outcome.result.n_total == 8
+    assert [d.n for d in outcome.result.descriptives] == [4, 4]

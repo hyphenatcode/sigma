@@ -90,8 +90,19 @@ cd frontend && npm install && npm run dev       # http://localhost:3000
 ```
 
 ```bash
-cd backend && ../.venv/bin/python -m pytest     # 238 tests
+cd backend && ../.venv/bin/python -m pytest     # 242 tests
 ```
+
+Step 3 of §8's validation strategy — reading every generated Turkish sentence
+and APA table before a pilot — is a script, since no assertion can judge prose:
+
+```bash
+cd backend && ../.venv/bin/python scripts/verify_reference_datasets.py
+cd backend && ../.venv/bin/python scripts/verify_reference_datasets.py --llm
+```
+
+With `--llm` it reports, per analysis, whether the generated text passed §3.6
+validation or was rejected and replaced — and prints the rejected text.
 
 ## Correctness
 

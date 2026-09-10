@@ -339,6 +339,23 @@ def run_analysis(frame: pd.DataFrame, request: AnalysisRequest) -> PipelineOutco
     labels = [label for label, _ in grouped]
     samples = [sample for _, sample in grouped]
 
+    # §3.3 counted the groups on the raw column, but a group whose dependent
+    # variable is entirely missing disappears once rows are dropped listwise.
+    # Refuse explicitly rather than silently comparing whatever is left.
+    expected_groups = 2 if registry.get(candidate).family is TestFamily.T_TEST else 3
+    if len(samples) < expected_groups:
+        present = ", ".join(labels) if labels else "yok"
+        raise InsufficientDataError(
+            f"Gruplama değişkeninin {expected_groups} düzeyi bekleniyordu, ancak "
+            f"eksik veriler çıkarıldıktan sonra yalnızca {len(samples)} grupta "
+            f"geçerli gözlem kaldı (kalan gruplar: {present})."
+        )
+    if registry.get(candidate).family is TestFamily.T_TEST and len(samples) > 2:
+        raise InsufficientDataError(
+            f"İki grup karşılaştırması bekleniyordu, ancak {len(samples)} grup "
+            f"bulundu ({', '.join(labels)})."
+        )
+
     decision = _decide_group_comparison(candidate, samples, labels)
     executed = decision.analysis_type
 

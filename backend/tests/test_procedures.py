@@ -9,7 +9,6 @@ This is the highest-priority NFR in §5: correctness over coverage.
 """
 
 import numpy as np
-import pandas as pd
 import pytest
 
 from app.stats.procedures.associations import (

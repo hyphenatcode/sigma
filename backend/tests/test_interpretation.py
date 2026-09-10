@@ -7,7 +7,6 @@ reject it. Every corruption below is one a language model plausibly produces.
 
 from unittest.mock import patch
 
-import pandas as pd
 import pytest
 
 from app.interpretation.llm import LLMResponse

@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from app.apa.formatting import fmt, fmt_df, fmt_p, fmt_statistic
+from app.stats.enums import AssumptionStatus
 from app.stats.registry import TestFamily, get as get_spec
 from app.stats.results import TestResult
 
@@ -422,16 +423,26 @@ def assumption_table(result: TestResult, number: int = 1) -> Optional[APATable]:
             fmt_p(check.p_value),
             _STATUS_LABELS.get(check.status.value, check.status.value),
         ])
+    # §3.4 still requires the section to appear when no assumption applies
+    # (Cronbach's alpha), but the note should not then describe tests that were
+    # never run.
+    any_test_ran = any(
+        check.status is not AssumptionStatus.NOT_APPLICABLE
+        for check in result.assumption_results
+    )
+    note = (
+        "Varsayım testlerinde α = .05 kullanılmıştır. Normallik ve varyans "
+        "homojenliği testleri, uygulanacak analizin belirlenmesinde kullanılmıştır."
+        if any_test_ran else
+        "Bu analiz için §3.4 kapsamında uygulanabilir bir varsayım testi "
+        "bulunmamaktadır."
+    )
     return APATable(
         number=number,
         title="Varsayım Kontrolleri",
         columns=["Varsayım", "Grup/Değişken", "Test", "İstatistik", "p", "Sonuç"],
         rows=rows,
-        note=(
-            "Varsayım testlerinde α = .05 kullanılmıştır. Normallik ve varyans "
-            "homojenliği testleri, uygulanacak analizin belirlenmesinde "
-            "kullanılmıştır."
-        ),
+        note=note,
         align=["left", "left", "left", "right", "right", "left"],
     )
 

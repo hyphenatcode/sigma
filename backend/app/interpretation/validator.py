@@ -39,7 +39,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable
 
 #: A numeric token: an optional sign, then digits with an optional decimal
 #: part, or a bare decimal fraction (".05", ",05"). Percent signs and the

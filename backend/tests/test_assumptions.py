@@ -2,7 +2,6 @@
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from app.stats import assumptions as assump
 from app.stats.enums import AssumptionStatus
