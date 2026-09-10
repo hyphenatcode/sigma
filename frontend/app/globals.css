@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+/* APA tables arrive from the backend as HTML (§3.7/§3.8), so they are styled
+   here rather than with utility classes. This mirrors the print stylesheet in
+   backend/app/export/templates/report.html. */
+.apa-preview .apa-table { margin: 1.5rem 0; }
+.apa-preview .apa-table-number { font-weight: 600; margin: 0; }
+.apa-preview .apa-table-title { font-style: italic; margin: 0 0 0.5rem; }
+.apa-preview table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+.apa-preview thead th {
+  border-top: 1px solid #111; border-bottom: 1px solid #111;
+  padding: 0.4rem 0.5rem; font-weight: 400; white-space: nowrap;
+}
+.apa-preview tbody td { padding: 0.35rem 0.5rem; }
+.apa-preview tbody tr:last-child td { border-bottom: 1px solid #111; }
+.apa-preview .align-right { text-align: right; }
+.apa-preview .align-left { text-align: left; }
+.apa-preview .apa-note { font-size: 0.8rem; color: #444; margin-top: 0.5rem; line-height: 1.5; }

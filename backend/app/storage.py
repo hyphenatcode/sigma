@@ -27,6 +27,25 @@ class StorageError(RuntimeError):
     pass
 
 
+def validate_encryption_key() -> None:
+    """Fail fast on a malformed key.
+
+    Without this the first upload dies with an opaque 500 from deep inside
+    cryptography; a key is either right at boot or the deployment is broken.
+    """
+    key = settings.storage_encryption_key
+    if not key:
+        return
+    try:
+        Fernet(key.encode() if isinstance(key, str) else key)
+    except Exception as exc:  # noqa: BLE001 — re-raised with an actionable message
+        raise StorageError(
+            "STORAGE_ENCRYPTION_KEY geçerli bir Fernet anahtarı değil. "
+            "Şu komutla üretin: python -c \"from cryptography.fernet import "
+            "Fernet; print(Fernet.generate_key().decode())\""
+        ) from exc
+
+
 def _fernet() -> Fernet:
     key = settings.storage_encryption_key
     if not key:

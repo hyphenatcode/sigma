@@ -24,3 +24,7 @@ yarn-error.log*
 
 # OS
 .DS_Store
+
+# Next.js build/type artifacts
+frontend/next-env.d.ts
+frontend/tsconfig.tsbuildinfo

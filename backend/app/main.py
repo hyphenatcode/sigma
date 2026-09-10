@@ -19,7 +19,7 @@ from app.ingestion import IngestionError
 from app.stats import registry
 from app.stats.pipeline import UnsupportedAnalysisError
 from app.stats.results import InsufficientDataError
-from app.storage import StorageError
+from app.storage import StorageError, validate_encryption_key
 
 #: See app/api/analyses.py — Starlette deprecated its 422 constant's old name.
 HTTP_422 = 422
@@ -82,6 +82,12 @@ def _storage(request: Request, exc: StorageError) -> JSONResponse:
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"detail": str(exc), "code": "storage_error"},
     )
+
+
+@app.on_event("startup")
+def _validate_configuration() -> None:
+    """§5 KVKK: a bad storage key must stop the app, not the first upload."""
+    validate_encryption_key()
 
 
 @app.get("/api/health", tags=["meta"])

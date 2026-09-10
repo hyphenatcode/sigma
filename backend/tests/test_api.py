@@ -420,3 +420,17 @@ def test_report_can_be_regenerated_and_refetched(client):
     fetched = client.get(f"/api/analyses/{analysis['id']}/report", headers=USER).json()
     assert fetched["interpretation_text_tr"] == second["interpretation_text_tr"]
     assert "F(2, 15) = 71.55" in fetched["interpretation_text_tr"]
+
+
+def test_a_malformed_encryption_key_is_rejected_at_startup(monkeypatch):
+    """§5 KVKK: misconfiguration must fail loudly at boot, not on first upload."""
+    from app.config import settings
+    from app.storage import StorageError, validate_encryption_key
+
+    monkeypatch.setattr(settings, "storage_encryption_key", "not-a-fernet-key")
+    with pytest.raises(StorageError) as excinfo:
+        validate_encryption_key()
+    assert "Fernet" in str(excinfo.value)
+
+    monkeypatch.setattr(settings, "storage_encryption_key", None)
+    validate_encryption_key()  # unset is allowed (ephemeral dev key)
