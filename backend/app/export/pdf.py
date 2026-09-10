@@ -17,9 +17,16 @@ class PdfExportError(RuntimeError):
 def render_pdf(content: ReportContent) -> bytes:
     try:
         from weasyprint import HTML
-    except ImportError as exc:  # pragma: no cover — dependency is declared
+    except (ImportError, OSError) as exc:
+        # ImportError: the Python package is missing.
+        # OSError: the package is installed but its native stack (pango, cairo,
+        # harfbuzz) is not on the loader path — the usual state of a fresh
+        # macOS machine. Either way the Word export still works, so the caller
+        # degrades to a report without a PDF rather than failing outright.
         raise PdfExportError(
-            "PDF oluşturmak için WeasyPrint kurulu olmalıdır."
+            "PDF oluşturulamadı: WeasyPrint ve sistem bağımlılıkları "
+            "(pango, cairo, harfbuzz) kurulu olmalıdır. Word (.docx) çıktısı "
+            "bundan etkilenmez."
         ) from exc
 
     return HTML(string=render_report_html(content)).write_pdf()

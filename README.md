@@ -75,23 +75,73 @@ backend/
 frontend/             minimal Next.js flow exercising the whole pipeline
 ```
 
-## Running it
+## Running it locally
+
+Verified on Python 3.11 and Node 22 against PostgreSQL 16.
+
+### Prerequisites
+
+- **Python 3.11+** and **Node 20+**
+- **PostgreSQL 14+**, running
+- **Pango/cairo**, for the PDF export only:
+  - Debian/Ubuntu: `sudo apt install libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b`
+  - macOS: `brew install pango libffi`
+  - Fedora: `sudo dnf install pango`
+
+  If you skip this, everything else still works: report generation falls back
+  to Word-only and the API returns a null `pdf_url` rather than failing.
+
+### Setup
 
 ```bash
-# Backend
+# 1. Python dependencies
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-cp .env.example .env          # set STORAGE_ENCRYPTION_KEY; ANTHROPIC_API_KEY optional
-createdb sigma
-cd backend && ../.venv/bin/alembic upgrade head
-../.venv/bin/uvicorn app.main:app --reload      # http://localhost:8000/docs
 
-# Frontend
+# 2. Database — the role matters, not just the database. The default
+#    DATABASE_URL is postgresql+psycopg2://sigma:sigma@localhost:5432/sigma,
+#    so `createdb sigma` on its own is not enough.
+sudo -u postgres psql -c "CREATE USER sigma WITH PASSWORD 'sigma' CREATEDB;"
+sudo -u postgres createdb -O sigma sigma
+
+# 3. Configuration. Keep .env at the repository root (it is read from there
+#    whichever directory you start the app from).
+cp .env.example .env
+.venv/bin/python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+#    ...paste that into STORAGE_ENCRYPTION_KEY in .env.
+#    ANTHROPIC_API_KEY is optional: without it, interpretations come from the
+#    deterministic Turkish templates and the statistics are unchanged.
+
+# 4. Migrations
+cd backend && ../.venv/bin/alembic upgrade head
+
+# 5. Run
+../.venv/bin/uvicorn app.main:app --reload      # http://localhost:8000/docs
+```
+
+```bash
+# Frontend, in a second terminal
 cd frontend && npm install && npm run dev       # http://localhost:3000
 ```
 
-```bash
-cd backend && ../.venv/bin/python -m pytest     # 242 tests
+The frontend proxies `/api/*` to `http://localhost:8000` by default; set
+`SIGMA_API_URL` to point it elsewhere.
+
+Sign in with any email address — auth is a development seam, see below. A new
+account gets one free analysis credit (§3.10); further runs return HTTP 402
+until the İyzico flow is wired, so during development grant more with:
+
+```sql
+INSERT INTO credit_ledger (id, user_id, package_type, credits_remaining, purchased_at)
+SELECT gen_random_uuid()::text, id, 'single_analysis', 10, now() FROM users;
 ```
+
+### Tests
+
+```bash
+cd backend && ../.venv/bin/python -m pytest     # 244 tests, no database needed
+```
+
+The suite runs on SQLite and needs neither PostgreSQL nor an API key.
 
 Step 3 of §8's validation strategy — reading every generated Turkish sentence
 and APA table before a pilot — is a script, since no assertion can judge prose:

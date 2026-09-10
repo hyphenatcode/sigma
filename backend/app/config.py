@@ -9,11 +9,19 @@ from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = BACKEND_ROOT.parent
 
 
 class Settings(BaseSettings):
+    # Absolute paths, not a bare ".env": pydantic-settings resolves a relative
+    # env_file against the *working directory*, so a repo-root .env was silently
+    # ignored whenever the app was started from backend/ — which is exactly how
+    # the README says to start it. Both locations are read, backend/.env last so
+    # it can override for a per-checkout tweak.
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+        env_file=(REPO_ROOT / ".env", BACKEND_ROOT / ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
     )
 
     app_name: str = "Sigma"

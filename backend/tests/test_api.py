@@ -434,3 +434,53 @@ def test_a_malformed_encryption_key_is_rejected_at_startup(monkeypatch):
 
     monkeypatch.setattr(settings, "storage_encryption_key", None)
     validate_encryption_key()  # unset is allowed (ephemeral dev key)
+
+
+def test_env_file_is_found_regardless_of_working_directory():
+    """A relative env_file resolves against the CWD, so a repo-root .env was
+    silently ignored when the app was started from backend/ — which is how the
+    README says to start it. The configured paths must be absolute."""
+    from pathlib import Path
+
+    from app.config import BACKEND_ROOT, REPO_ROOT, Settings
+
+    configured = Settings.model_config["env_file"]
+    paths = [Path(p) for p in configured]
+
+    assert all(p.is_absolute() for p in paths), configured
+    assert REPO_ROOT / ".env" in paths
+    assert BACKEND_ROOT / ".env" in paths
+
+
+def test_report_still_delivered_when_pdf_backend_is_unavailable(client):
+    """WeasyPrint needs a native pango/cairo stack that a fresh machine may
+    lack. The Word file is the primary deliverable and must survive that."""
+    from unittest.mock import patch
+
+    from app.export.pdf import PdfExportError
+
+    dataset = upload(client, "ttest_independent.csv")
+    confirm(client, dataset["id"], [
+        {"column_name": "basari_puani", "measurement_level": "ratio"},
+        {"column_name": "yontem", "measurement_level": "nominal"},
+    ])
+    analysis = client.post("/api/analyses", headers=USER, json={
+        "dataset_id": dataset["id"], "dependent_variable": "basari_puani",
+        "independent_variables": ["yontem"]}).json()
+
+    with patch("app.api.reports.render_pdf",
+               side_effect=PdfExportError("pango yok")):
+        response = client.post(
+            f"/api/analyses/{analysis['id']}/report?use_llm=false", headers=USER
+        )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["docx_url"], "the Word export must still be produced"
+    assert body["pdf_url"] is None
+    assert body["interpretation_text_tr"]
+
+    download = client.get(
+        f"/api/analyses/{analysis['id']}/report/download/pdf", headers=USER
+    )
+    assert download.status_code == 404
