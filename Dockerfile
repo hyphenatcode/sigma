@@ -80,8 +80,13 @@ WORKDIR /app/backend
 EXPOSE 8000
 
 # Uses the venv's Python rather than curl, which is not installed.
+#
+# Reads PORT the same way the entrypoint does. Hardcoding 8000 here would
+# report the container unhealthy on any platform that injects its own port
+# (Railway, Cloud Run, ECS) even while the app is serving perfectly.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import urllib.request,sys; \
-sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4).status==200 else 1)"
+    CMD python -c "import os,urllib.request,sys; \
+p=os.environ.get('PORT','8000'); \
+sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{p}/api/health', timeout=4).status==200 else 1)"
 
 ENTRYPOINT ["/app/entrypoint.sh"]
