@@ -12,8 +12,9 @@ if [ "${RUN_MIGRATIONS:-0}" = "1" ]; then
     alembic upgrade head
 fi
 
-# PORT is injected by Railway, Fly and Cloud Run; 8000 matches the HEALTHCHECK
-# and the frontend's default proxy target.
+# PORT is injected by Railway, Fly and Cloud Run. The HEALTHCHECK reads the
+# same variable, so the two cannot drift; 8000 is the shared fallback and the
+# frontend's default proxy target.
 exec uvicorn app.main:app \
     --host 0.0.0.0 \
     --port "${PORT:-8000}" \
