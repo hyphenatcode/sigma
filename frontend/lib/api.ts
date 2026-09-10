@@ -1,9 +1,14 @@
 /**
  * Client for the Sigma API (§6).
  *
- * Identity is sent as X-User-Email, matching the backend's development auth
- * seam. When Supabase/Clerk lands (§7) this is the one place that changes.
+ * Every request carries the Supabase session JWT as `Authorization: Bearer`,
+ * which the API verifies cryptographically. When Supabase is not configured
+ * the client falls back to the `X-User-Email` development header — which the
+ * backend only accepts with ALLOW_INSECURE_HEADER_AUTH on, and refuses
+ * outright in production.
  */
+
+import { getAccessToken, isSupabaseConfigured } from "./supabase";
 
 const USER_EMAIL_KEY = "sigma:user-email";
 
@@ -116,9 +121,19 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers);
+/** Attach whichever credential this deployment actually uses. */
+async function authHeaders(headers: Headers): Promise<Headers> {
+  if (isSupabaseConfigured) {
+    const token = await getAccessToken();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    return headers;
+  }
   headers.set("X-User-Email", getUserEmail());
+  return headers;
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = await authHeaders(new Headers(init.headers));
   if (init.body && !(init.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
@@ -126,7 +141,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, { ...init, headers });
 
   if (!response.ok) {
-    let message = `İstek başarısız oldu (${response.status}).`;
+    let message =
+      response.status === 401
+        ? "Oturumunuz sona ermiş olabilir. Lütfen tekrar giriş yapın."
+        : `İstek başarısız oldu (${response.status}).`;
     let code: string | undefined;
     try {
       const body = await response.json();
@@ -202,7 +220,7 @@ export async function getCredits(): Promise<Credits> {
 /**
  * Download a generated report.
  *
- * A plain <a href> cannot carry the X-User-Email header the API requires, so
+ * A plain <a href> cannot carry the Authorization header the API requires, so
  * the file is fetched and handed to the browser as a blob.
  */
 export async function downloadReport(
@@ -211,7 +229,7 @@ export async function downloadReport(
 ): Promise<void> {
   const response = await fetch(
     `/api/analyses/${analysisId}/report/download/${format}`,
-    { headers: { "X-User-Email": getUserEmail() } },
+    { headers: await authHeaders(new Headers()) },
   );
   if (!response.ok) {
     throw new ApiError(`Rapor indirilemedi (${response.status}).`, response.status);

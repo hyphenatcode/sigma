@@ -62,6 +62,13 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False, index=True)
+    #: Supabase's `sub` claim — the stable user id. Email is what a person
+    #: types, but they can change it, so identity is keyed here and email is
+    #: kept only as a display/contact value. Nullable because rows created
+    #: before Supabase was wired have no provider id until that user signs in.
+    auth_provider_id: Mapped[Optional[str]] = mapped_column(
+        String(255), unique=True, nullable=True, index=True
+    )
     university_email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     organization_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True

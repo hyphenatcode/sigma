@@ -50,6 +50,26 @@ class Settings(BaseSettings):
     #: after a restart.
     storage_encryption_key: Optional[str] = None
 
+    # --- Auth (§7: Supabase) ------------------------------------------------
+    #: Project URL, e.g. https://abcdefgh.supabase.co. Used to derive both the
+    #: JWKS endpoint and the expected issuer, so it is the only value most
+    #: deployments need to set.
+    supabase_url: Optional[str] = None
+    #: Legacy symmetric secret (HS256). Projects migrated to asymmetric signing
+    #: keys do not need it; projects that have not, do.
+    supabase_jwt_secret: Optional[str] = None
+    #: Overrides the URL derived from `supabase_url` — for self-hosted Auth.
+    supabase_jwks_url: Optional[str] = None
+    #: Supabase sets `aud` to "authenticated" for signed-in users.
+    supabase_audience: str = "authenticated"
+    #: Tolerance for clock skew between this server and Supabase.
+    jwt_leeway_seconds: int = 10
+
+    #: Development escape hatch: identify the caller by an X-User-Email header.
+    #: This is NOT authentication — anyone can claim any identity. Production
+    #: refuses to start with it enabled (see validate_production_settings).
+    allow_insecure_header_auth: bool = False
+
     # §3.10 credits
     free_trial_credits: int = 1
 
@@ -58,6 +78,32 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.environment.strip().lower() in ("production", "prod")
+
+    @property
+    def resolved_jwks_url(self) -> Optional[str]:
+        """Where to fetch the project's public signing keys."""
+        if self.supabase_jwks_url:
+            return self.supabase_jwks_url
+        if self.supabase_url:
+            return f"{self.supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
+        return None
+
+    @property
+    def expected_issuer(self) -> Optional[str]:
+        """The `iss` a token from this project must carry.
+
+        Returns None when `supabase_url` is unset, which disables the issuer
+        check — acceptable only when the symmetric secret is the sole
+        verification path, since that secret is already project-specific. With
+        JWKS there is no such binding, which is why production requires the URL.
+        """
+        if not self.supabase_url:
+            return None
+        return f"{self.supabase_url.rstrip('/')}/auth/v1"
+
+    @property
+    def auth_configured(self) -> bool:
+        return bool(self.supabase_jwt_secret or self.resolved_jwks_url)
 
 
 class ConfigurationError(RuntimeError):
@@ -107,6 +153,25 @@ def validate_production_settings(config: "Settings | None" = None) -> None:
             f"CORS_ORIGINS still contains development origins: "
             f"{', '.join(localhost_origins)}."
         )
+    if config.allow_insecure_header_auth:
+        problems.append(
+            "ALLOW_INSECURE_HEADER_AUTH is enabled. That header is not "
+            "authentication — any caller could claim any user's identity and "
+            "read their uploaded data."
+        )
+    if not config.auth_configured:
+        problems.append(
+            "Supabase auth is not configured. Set SUPABASE_URL (and "
+            "SUPABASE_JWT_SECRET if the project still uses legacy HS256 "
+            "signing), or the API would have no way to authenticate anyone."
+        )
+    elif config.resolved_jwks_url and not config.supabase_url:
+        problems.append(
+            "SUPABASE_JWKS_URL is set without SUPABASE_URL, so the issuer "
+            "claim cannot be checked and a token from any other Supabase "
+            "project signed by the same key set would be accepted."
+        )
+
     if not config.anthropic_api_key:
         # Not fatal by design: §3.6's deterministic templates make the LLM
         # optional, and the statistics are identical either way.

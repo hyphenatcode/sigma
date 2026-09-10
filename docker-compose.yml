@@ -36,6 +36,9 @@ services:
       # the credentials above are public and storage is a container volume.
       ENVIRONMENT: development
       DEBUG: "false"
+      # No Supabase project is wired into this local stack, so the API would
+      # reject every request without this. Production refuses to start with it.
+      ALLOW_INSECURE_HEADER_AUTH: "true"
       RUN_MIGRATIONS: "1"
       # Generate with:
       #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"

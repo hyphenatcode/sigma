@@ -17,13 +17,14 @@ import {
   generateReport,
   getCredits,
   getUserEmail,
-  setUserEmail,
   uploadDataset,
   type Analysis,
   type Dataset,
   type MeasurementLevel,
   type Report,
 } from "@/lib/api";
+import { isSupabaseConfigured, signOut, supabase } from "@/lib/supabase";
+import { SignIn } from "./components/SignIn";
 import { ResultView } from "./components/ResultView";
 import { VariableTable, type VariableChoice } from "./components/VariableTable";
 import { Button, Card, ErrorBanner, Select, Steps } from "./components/ui";
@@ -63,12 +64,51 @@ export default function Home() {
   const [scaleItems, setScaleItems] = useState<string[]>([]);
 
   useEffect(() => {
-    const stored = getUserEmail();
-    if (stored) {
-      setEmail(stored);
-      setStep(1);
+    if (!isSupabaseConfigured) {
+      // Development mode: the email in localStorage is the whole "session".
+      const stored = getUserEmail();
+      if (stored) {
+        setEmail(stored);
+        setStep(1);
+        void refreshCredits();
+      }
+      return;
     }
+
+    // Supabase restores the session from storage and, after a magic-link
+    // click, from the URL — so subscribe rather than reading once.
+    let active = true;
+    void supabase!.auth.getSession().then(({ data }) => {
+      if (active) applySession(data.session?.user?.email ?? null);
+    });
+    const { data: subscription } = supabase!.auth.onAuthStateChange(
+      (_event, session) => applySession(session?.user?.email ?? null),
+    );
+    return () => {
+      active = false;
+      subscription.subscription.unsubscribe();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function applySession(sessionEmail: string | null) {
+    if (sessionEmail) {
+      setEmail(sessionEmail);
+      setStep((current) => (current === 0 ? 1 : current));
+      void refreshCredits();
+    } else {
+      setEmail("");
+      setStep(0);
+      setCredits(null);
+    }
+  }
+
+  async function handleSignOut() {
+    await signOut();
+    restart();
+    setStep(0);
+    setCredits(null);
+  }
 
   const columns = useMemo(
     () => (dataset?.variables ?? []).map((v) => v.column_name),
@@ -91,17 +131,6 @@ export default function Home() {
           ? caught.message
           : "Beklenmeyen bir hata oluştu.",
     );
-  }
-
-  async function handleSignIn() {
-    if (!email.includes("@")) {
-      setError("Lütfen geçerli bir e-posta adresi girin.");
-      return;
-    }
-    setError(null);
-    setUserEmail(email.trim().toLowerCase());
-    await refreshCredits();
-    setStep(1);
   }
 
   async function handleUpload(file: File) {
@@ -212,12 +241,31 @@ export default function Home() {
               Tezin için istatistiksel analiz — SPSS bilmene gerek yok.
             </p>
           </div>
-          {credits !== null ? (
-            <p className="text-sm text-slate-600">
-              Kalan analiz kredisi:{" "}
-              <span className="font-semibold text-slate-900">{credits}</span>
-            </p>
-          ) : null}
+          <div className="text-right text-sm text-slate-600">
+            {credits !== null ? (
+              <p>
+                Kalan analiz kredisi:{" "}
+                <span className="font-semibold text-slate-900">{credits}</span>
+              </p>
+            ) : null}
+            {email && step > 0 ? (
+              <p className="mt-0.5 text-xs text-slate-500">
+                {email}
+                {isSupabaseConfigured ? (
+                  <>
+                    {" · "}
+                    <button
+                      type="button"
+                      onClick={() => void handleSignOut()}
+                      className="underline hover:text-slate-800"
+                    >
+                      çıkış
+                    </button>
+                  </>
+                ) : null}
+              </p>
+            ) : null}
+          </div>
         </div>
         <div className="mt-4">
           <Steps current={step} labels={STEP_LABELS} />
@@ -232,30 +280,13 @@ export default function Home() {
 
       <div className="space-y-6">
         {step === 0 ? (
-          <Card
-            title="Giriş"
-            description="Şimdilik yalnızca e-posta adresinizle tanınıyorsunuz."
-          >
-            <div className="flex flex-wrap items-end gap-3">
-              <div className="min-w-64 flex-1">
-                <label
-                  htmlFor="email"
-                  className="block text-xs font-medium text-slate-600"
-                >
-                  E-posta adresi
-                </label>
-                <input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="ad.soyad@universite.edu.tr"
-                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                />
-              </div>
-              <Button onClick={handleSignIn}>Devam et</Button>
-            </div>
-          </Card>
+          <SignIn
+            onDevSignIn={(signedInEmail) => {
+              setEmail(signedInEmail);
+              void refreshCredits();
+              setStep(1);
+            }}
+          />
         ) : null}
 
         {step === 1 ? (

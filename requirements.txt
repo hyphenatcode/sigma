@@ -13,6 +13,11 @@ statsmodels>=0.14
 pingouin>=0.5.4
 openpyxl>=3.1
 
+# Auth (§7: Supabase). [crypto] pulls in the RSA/ECDSA backends needed to
+# verify Supabase's asymmetric ES256 tokens; cryptography is already required
+# below for encryption at rest.
+PyJWT[crypto]>=2.8
+
 # Persistence
 SQLAlchemy>=2.0
 alembic>=1.13

@@ -184,18 +184,47 @@ render time.
 
 **Not yet production-ready**, in order of severity:
 
-1. **Auth is a development seam.** `X-User-Email` means any caller can read any
-   user's datasets by changing a header. Endpoints already scope by user id and
-   tests assert cross-user access 404s, so the fix is confined to
-   `get_current_user` — but until it lands, no real respondent data belongs here.
-2. **Storage is a container filesystem.** It does not survive a redeploy.
+1. **Storage is a container filesystem.** It does not survive a redeploy.
    §7 specifies Cloudflare R2; `app/storage.py`'s save/load/delete interface is
    the seam.
-3. **The storage key has no rotation path**, and losing it loses every dataset.
-4. **The LLM path has only ever run against mocks.** Before trusting it, run
+2. **The storage key has no rotation path**, and losing it loses every dataset.
+3. **The LLM path has only ever run against mocks.** Before trusting it, run
    `scripts/verify_reference_datasets.py --llm` with a real key and read the
    output — the pass rate through the §3.6 validator is currently unknown.
-5. **İyzico is unwired**, so users hit HTTP 402 after their one free analysis.
+4. **İyzico is unwired**, so users hit HTTP 402 after their one free analysis.
+5. **Supabase verification has not been exercised against a real project.**
+   The logic is tested against locally minted tokens and both signing schemes,
+   but no live project has issued a token to it.
+
+## Authentication
+
+Supabase Auth (§7). The API verifies the session JWT on every request:
+signature, expiry, audience and issuer, against either the project's legacy
+HS256 secret or — for projects on asymmetric signing keys — the ES256 public
+key fetched from the project's JWKS endpoint and cached.
+
+Set `SUPABASE_URL` (the JWKS endpoint and the expected issuer are derived from
+it) plus `SUPABASE_JWT_SECRET` if the project still signs with the legacy
+secret. The frontend needs `NEXT_PUBLIC_SUPABASE_URL` and
+`NEXT_PUBLIC_SUPABASE_ANON_KEY`, and signs users in with a magic link — which
+doubles as the email verification §3.10 wants for the free tier.
+
+Identity is keyed on Supabase's `sub`, not on email, because people change
+their email address. A row created before a user's first sign-in is claimed by
+matching email rather than orphaned.
+
+Without Supabase configured, `ALLOW_INSECURE_HEADER_AUTH=true` falls back to an
+`X-User-Email` header so local development and the test suite need no live
+project. That is **not authentication** — any caller can claim any identity —
+so it is off by default and `ENVIRONMENT=production` refuses to start with it
+enabled. The sign-in screen says so on screen when it is in use.
+
+The verification path is tested against tokens minted in the tests themselves,
+including a hand-forged algorithm-confusion attack: the attacker takes the
+public key (which is published) and uses it as an HMAC secret to mint an HS256
+token. A server that picks its key from the token's own `alg` header accepts
+that. `app/auth.py` chooses the key and the permitted algorithms together, so
+the HS256 branch can only ever reach the symmetric secret.
 
 ## Sample data
 

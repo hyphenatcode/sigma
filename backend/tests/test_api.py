@@ -23,9 +23,19 @@ USER = {"X-User-Email": "arastirmaci@universite.edu.tr"}
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
+    """A client authenticated through the development header.
+
+    These tests are about the API's behaviour, not about authentication, so
+    they take the X-User-Email path rather than minting Supabase tokens for
+    every request — real token verification is covered in test_auth.py, and the
+    Bearer path through the API is covered at the bottom of this file. The flag
+    has to be set explicitly here, which is the point: it is off by default and
+    production refuses to start with it on.
+    """
     from app.config import settings
 
     monkeypatch.setattr(settings, "storage_dir", tmp_path / "storage")
+    monkeypatch.setattr(settings, "allow_insecure_header_auth", True)
 
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
@@ -571,3 +581,226 @@ def test_comma_decimals_survive_the_full_pipeline():
     assert outcome.executed_analysis_type == "independent_t_test"
     assert outcome.result.n_total == 60
     assert abs(outcome.result.statistics["t"]) > 1
+
+
+# ---------------------------------------------------------------------------
+# Authentication at the API boundary (§7)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def supabase_client(tmp_path, monkeypatch):
+    """A client with the dev header OFF and Supabase configured — i.e. how a
+    deployment actually runs."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from app.auth import reset_verifier
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "storage_dir", tmp_path / "storage")
+    monkeypatch.setattr(settings, "allow_insecure_header_auth", False)
+    monkeypatch.setattr(settings, "supabase_url", "https://abcdefgh.supabase.co")
+    monkeypatch.setattr(settings, "supabase_jwt_secret", "test-project-secret-long-enough-for-sha256")
+    reset_verifier()
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                           poolclass=StaticPool)
+    TestingSession = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+    from app.db import Base, get_db
+    import app.models  # noqa: F401
+
+    Base.metadata.create_all(engine)
+
+    from app.main import app
+
+    def override_get_db():
+        session = TestingSession()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+    reset_verifier()
+
+
+def bearer(sub="user-uuid-1", email="tez@universite.edu.tr", **overrides):
+    import time
+
+    import jwt
+
+    payload = {
+        "sub": sub, "aud": "authenticated",
+        "iss": "https://abcdefgh.supabase.co/auth/v1",
+        "role": "authenticated", "email": email,
+        "user_metadata": {"email_verified": True},
+        "iat": int(time.time()) - 5, "exp": int(time.time()) + 3600,
+    }
+    payload.update(overrides)
+    token = jwt.encode(payload, "test-project-secret-long-enough-for-sha256",
+                       algorithm="HS256")
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_valid_supabase_token_authenticates(supabase_client):
+    response = supabase_client.get("/api/credits", headers=bearer())
+    assert response.status_code == 200
+    assert response.json()["credits_remaining"] == 1
+
+
+def test_the_development_header_is_refused_when_disabled(supabase_client):
+    """The header seam must be closed by default — this is the whole point."""
+    response = supabase_client.get(
+        "/api/credits", headers={"X-User-Email": "sahte@universite.edu.tr"}
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize("headers", [
+    {},
+    {"Authorization": "Bearer not-a-real-token"},
+    {"Authorization": "Basic dXNlcjpwYXNz"},
+    {"Authorization": "Bearer "},
+])
+def test_missing_or_malformed_credentials_are_401(supabase_client, headers):
+    assert supabase_client.get("/api/credits", headers=headers).status_code == 401
+
+
+def test_a_token_from_another_project_cannot_authenticate(supabase_client):
+    import time
+
+    import jwt
+
+    foreign = jwt.encode({
+        "sub": "user-uuid-1", "aud": "authenticated",
+        "iss": "https://someoneelse.supabase.co/auth/v1",
+        "email": "tez@universite.edu.tr",
+        "exp": int(time.time()) + 3600,
+    }, "test-project-secret-long-enough-for-sha256", algorithm="HS256")
+
+    response = supabase_client.get(
+        "/api/credits", headers={"Authorization": f"Bearer {foreign}"}
+    )
+    assert response.status_code == 401
+
+
+def test_identity_follows_the_subject_not_the_email(supabase_client):
+    """Supabase's `sub` is stable; an email address is not. Changing the email
+    must keep the same account rather than silently creating a second one."""
+    from app.db import get_db
+    from app.models import User
+
+    supabase_client.get("/api/credits", headers=bearer(email="eski@universite.edu.tr"))
+    supabase_client.get("/api/credits", headers=bearer(email="yeni@universite.edu.tr"))
+
+    session = next(supabase_client.app.dependency_overrides[get_db]())
+    users = session.query(User).all()
+    assert len(users) == 1
+    assert users[0].email == "yeni@universite.edu.tr"
+    assert users[0].auth_provider_id == "user-uuid-1"
+
+
+def test_two_subjects_are_two_users(supabase_client):
+    supabase_client.get("/api/credits", headers=bearer(sub="a", email="a@universite.edu.tr"))
+    supabase_client.get("/api/credits", headers=bearer(sub="b", email="b@universite.edu.tr"))
+
+    from app.db import get_db
+    from app.models import User
+
+    session = next(supabase_client.app.dependency_overrides[get_db]())
+    assert session.query(User).count() == 2
+
+
+def test_one_users_dataset_is_invisible_to_another(supabase_client):
+    """The property the header seam could not provide: real isolation."""
+    data = (FIXTURES / "ttest_independent.csv").read_bytes()
+    upload_response = supabase_client.post(
+        "/api/datasets",
+        files={"file": ("v.csv", io.BytesIO(data), "text/csv")},
+        headers=bearer(sub="owner", email="owner@universite.edu.tr"),
+    )
+    assert upload_response.status_code == 201
+    dataset_id = upload_response.json()["id"]
+
+    intruder = supabase_client.get(
+        f"/api/datasets/{dataset_id}",
+        headers=bearer(sub="intruder", email="intruder@universite.edu.tr"),
+    )
+    assert intruder.status_code == 404
+
+
+def test_unverified_email_does_not_count_as_a_verified_university_address(
+    supabase_client,
+):
+    """§3.10 gates the free tier on a *confirmed* university address."""
+    from app.db import get_db
+    from app.models import User
+
+    supabase_client.get("/api/credits", headers=bearer(
+        sub="unconfirmed", email="tez@universite.edu.tr", user_metadata={}))
+
+    session = next(supabase_client.app.dependency_overrides[get_db]())
+    user = session.query(User).filter(User.auth_provider_id == "unconfirmed").one()
+    assert user.university_email_verified is False
+
+
+def test_a_confirmed_non_university_address_is_not_marked_verified(supabase_client):
+    from app.db import get_db
+    from app.models import User
+
+    supabase_client.get("/api/credits", headers=bearer(
+        sub="gmail-user", email="birisi@gmail.com"))
+
+    session = next(supabase_client.app.dependency_overrides[get_db]())
+    user = session.query(User).filter(User.auth_provider_id == "gmail-user").one()
+    assert user.university_email_verified is False
+
+
+def test_a_confirmed_university_address_is_marked_verified(supabase_client):
+    from app.db import get_db
+    from app.models import User
+
+    supabase_client.get("/api/credits", headers=bearer(
+        sub="uni-user", email="ogrenci@bogazici.edu.tr"))
+
+    session = next(supabase_client.app.dependency_overrides[get_db]())
+    user = session.query(User).filter(User.auth_provider_id == "uni-user").one()
+    assert user.university_email_verified is True
+
+
+def test_a_bearer_token_is_refused_when_supabase_is_not_configured(
+    supabase_client, monkeypatch
+):
+    """A misconfigured deployment must fail closed, never fall through to the
+    insecure header path."""
+    from app.auth import reset_verifier
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "supabase_url", None)
+    monkeypatch.setattr(settings, "supabase_jwt_secret", None)
+    reset_verifier()
+
+    assert supabase_client.get("/api/credits", headers=bearer()).status_code == 401
+
+
+def test_pre_supabase_rows_are_claimed_on_first_sign_in(supabase_client):
+    """A row created before auth existed keeps its datasets when its owner
+    signs in for the first time, rather than being orphaned."""
+    from app.db import get_db
+    from app.models import User
+
+    session = next(supabase_client.app.dependency_overrides[get_db]())
+    session.add(User(email="eskikullanici@universite.edu.tr", auth_provider_id=None))
+    session.commit()
+
+    supabase_client.get("/api/credits", headers=bearer(
+        sub="returning-user", email="eskikullanici@universite.edu.tr"))
+
+    users = session.query(User).all()
+    assert len(users) == 1
+    assert users[0].auth_provider_id == "returning-user"
