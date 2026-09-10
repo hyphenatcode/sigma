@@ -1,0 +1,22 @@
+.git/
+.github/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Secrets and local state must never enter an image layer.
+.env
+.env.local
+backend/storage/
+storage/
+
+frontend/
+sample-data/
+docs/
+*.md
+!README.md
+
+.DS_Store

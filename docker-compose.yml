@@ -1,0 +1,54 @@
+# Local stack: Postgres plus the backend image.
+#
+# This is for running the container locally and for checking the image builds;
+# the day-to-day development loop in the README (venv + uvicorn --reload) stays
+# faster. The frontend is not containerised — §7 puts it on Vercel, and
+# `npm run dev` against this API is the shorter path.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sigma
+      POSTGRES_PASSWORD: sigma
+      POSTGRES_DB: sigma
+    ports:
+      - "5432:5432"
+    volumes:
+      - sigma-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sigma -d sigma"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg2://sigma:sigma@db:5432/sigma
+      # Compose is a development stack, so the production guardrails in
+      # app/config.py stay off. Deploying this file as-is would be a mistake:
+      # the credentials above are public and storage is a container volume.
+      ENVIRONMENT: development
+      DEBUG: "false"
+      RUN_MIGRATIONS: "1"
+      # Generate with:
+      #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+      STORAGE_ENCRYPTION_KEY: ${STORAGE_ENCRYPTION_KEY:?set STORAGE_ENCRYPTION_KEY in your shell or a .env file}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CORS_ORIGINS: '["http://localhost:3000"]'
+    ports:
+      - "8000:8000"
+    volumes:
+      # Keeps uploads across container restarts locally. Real deployments
+      # should point storage at object storage instead (§7: Cloudflare R2).
+      - sigma-storage:/app/backend/storage
+
+volumes:
+  sigma-db:
+  sigma-storage:

@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api import analyses, credits, datasets, reports
-from app.config import settings
+from app.config import settings, validate_production_settings
 from app.ingestion import IngestionError
 from app.stats import registry
 from app.stats.pipeline import UnsupportedAnalysisError
@@ -86,8 +86,14 @@ def _storage(request: Request, exc: StorageError) -> JSONResponse:
 
 @app.on_event("startup")
 def _validate_configuration() -> None:
-    """§5 KVKK: a bad storage key must stop the app, not the first upload."""
+    """Fail fast on misconfiguration rather than at the first upload.
+
+    §5 KVKK: a malformed storage key must stop the app. And in production a
+    *missing* key is worse than malformed — the app would start, encrypt
+    uploads with an ephemeral key, and lose them all at the next restart.
+    """
     validate_encryption_key()
+    validate_production_settings()
 
 
 @app.get("/api/health", tags=["meta"])

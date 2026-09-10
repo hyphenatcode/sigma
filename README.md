@@ -154,6 +154,49 @@ cd backend && ../.venv/bin/python scripts/verify_reference_datasets.py --llm
 With `--llm` it reports, per analysis, whether the generated text passed §3.6
 validation or was rejected and replaced — and prints the rejected text.
 
+## Deploying
+
+The backend ships as a container because of WeasyPrint: it imports fine without
+pango, cairo and harfbuzz and then fails at render time, so pinning that stack
+in an image beats rediscovering it on each host. Fonts are part of the same
+problem — the report asks for Times New Roman, which does not exist on Linux,
+so the image installs the metric-compatible substitute plus DejaVu for the
+Turkish diacritics.
+
+```bash
+# Local stack (Postgres + the image), mainly to check the image builds
+export STORAGE_ENCRYPTION_KEY=$(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+docker compose up --build
+```
+
+Deploy the image to Railway or Fly (§7), the frontend to Vercel with
+`SIGMA_API_URL` pointing at the API. Set `ENVIRONMENT=production` and the app
+will refuse to start if the storage key is missing, `DATABASE_URL` is still the
+example value, `DEBUG` is on, or `CORS_ORIGINS` still points at localhost —
+each of which otherwise fails silently rather than loudly. Run
+`alembic upgrade head` as a release step, or set `RUN_MIGRATIONS=1` on a
+single-instance platform.
+
+CI (`.github/workflows/ci.yml`) runs the suite, the reference-dataset
+verification, the frontend typecheck and build, and builds the image — then
+renders a PDF inside it, because a missing native library only shows up at
+render time.
+
+**Not yet production-ready**, in order of severity:
+
+1. **Auth is a development seam.** `X-User-Email` means any caller can read any
+   user's datasets by changing a header. Endpoints already scope by user id and
+   tests assert cross-user access 404s, so the fix is confined to
+   `get_current_user` — but until it lands, no real respondent data belongs here.
+2. **Storage is a container filesystem.** It does not survive a redeploy.
+   §7 specifies Cloudflare R2; `app/storage.py`'s save/load/delete interface is
+   the seam.
+3. **The storage key has no rotation path**, and losing it loses every dataset.
+4. **The LLM path has only ever run against mocks.** Before trusting it, run
+   `scripts/verify_reference_datasets.py --llm` with a real key and read the
+   output — the pass rate through the §3.6 validator is currently unknown.
+5. **İyzico is unwired**, so users hit HTTP 402 after their one free analysis.
+
 ## Sample data
 
 `sample-data/` holds ten thesis-sized Turkish datasets covering every analysis
