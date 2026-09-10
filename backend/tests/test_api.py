@@ -8,7 +8,6 @@ migration and the deployed app still target PostgreSQL (§7).
 from __future__ import annotations
 
 import io
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -150,19 +149,26 @@ def test_upload_rejects_unsupported_extension(client):
 
 
 def test_uploaded_file_is_encrypted_at_rest(client, tmp_path):
-    """§5 KVKK: the plaintext must not be readable on disk."""
+    """§5 KVKK: the stored bytes must be ciphertext, whichever backend holds them.
+
+    Read through the backend rather than the filesystem — `storage_path` is a
+    key now, and the same assertion has to hold on R2.
+    """
     payload = upload(client, "ttest_independent.csv")
 
+    from app import storage
     from app.db import get_db
     from app.models import Dataset
 
     session = next(client.app.dependency_overrides[get_db]())
     dataset = session.get(Dataset, payload["id"])
-    stored = Path(dataset.storage_path).read_bytes()
+    stored = storage.get_backend().get(dataset.storage_path)
 
     assert b"basari_puani" not in stored
     assert b"Deney" not in stored
     assert stored.startswith(b"gAAAA")  # Fernet token prefix
+    # ...and it really is the dataset once decrypted
+    assert b"basari_puani" in storage.load(dataset.storage_path)
 
 
 def test_confirm_variables_overrides_detection(client):
@@ -196,18 +202,21 @@ def test_dataset_is_scoped_to_its_owner(client):
 
 
 def test_delete_dataset_removes_the_stored_file(client):
-    """§5 KVKK: the data-deletion endpoint."""
+    """§5 KVKK: the data-deletion endpoint removes the object, not just the row."""
     payload = upload(client, "ttest_independent.csv")
 
+    from app import storage
     from app.db import get_db
     from app.models import Dataset
 
     session = next(client.app.dependency_overrides[get_db]())
-    stored = Path(session.get(Dataset, payload["id"]).storage_path)
-    assert stored.exists()
+    key = session.get(Dataset, payload["id"]).storage_path
+    assert storage.get_backend().get(key)  # present before
 
     assert client.delete(f"/api/datasets/{payload['id']}", headers=USER).status_code == 204
-    assert not stored.exists()
+
+    with pytest.raises(storage.ObjectNotFound):
+        storage.get_backend().get(key)
     assert client.get(f"/api/datasets/{payload['id']}", headers=USER).status_code == 404
 
 

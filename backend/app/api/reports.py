@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app import storage
@@ -172,7 +170,14 @@ def download_report(
     fmt: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> FileResponse:
+) -> Response:
+    """Stream the stored report back.
+
+    The bytes are read from storage and returned rather than served from a
+    path: with R2 there is no local path, and streaming through this endpoint
+    keeps the ownership check in one place. A presigned R2 URL would hand out
+    access that bypasses `_owned_analysis` entirely.
+    """
     analysis = _owned_analysis(analysis_id, db, user)
     report = analysis.report
     if report is None:
@@ -180,20 +185,28 @@ def download_report(
                             detail="Bu analiz için rapor oluşturulmamış.")
 
     if fmt == "docx":
-        path, media_type = report.docx_path, (
+        key, media_type = report.docx_path, (
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
     elif fmt == "pdf":
-        path, media_type = report.pdf_path, "application/pdf"
+        key, media_type = report.pdf_path, "application/pdf"
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Desteklenmeyen dosya biçimi.")
 
-    if not path or not Path(path).exists():
+    if not key:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="Rapor dosyası bulunamadı.")
 
-    return FileResponse(
-        path, media_type=media_type,
-        filename=f"sigma-rapor-{analysis.id[:8]}.{fmt}",
+    try:
+        data = storage.load_artifact(key)
+    except storage.ObjectNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Rapor dosyası bulunamadı.") from exc
+
+    filename = f"sigma-rapor-{analysis.id[:8]}.{fmt}"
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

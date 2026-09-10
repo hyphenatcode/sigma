@@ -22,6 +22,10 @@ PRODUCTION_SAFE = dict(
     cors_origins=("https://sigma.app",),
     supabase_url="https://abcdefgh.supabase.co",
     allow_insecure_header_auth=False,
+    r2_account_id="abc123",
+    r2_access_key_id="key",
+    r2_secret_access_key="secret",
+    r2_bucket="sigma",
 )
 
 
@@ -45,6 +49,11 @@ def test_a_correctly_configured_production_deployment_starts():
     ({"supabase_url": None,
       "supabase_jwks_url": "https://x.supabase.co/auth/v1/.well-known/jwks.json"},
      "issuer"),
+    # A container filesystem does not survive a redeploy, so production
+    # without object storage would silently lose every upload.
+    ({"r2_bucket": None}, "Object storage is not configured"),
+    ({"r2_access_key_id": None}, "Object storage is not configured"),
+    ({"r2_account_id": None, "r2_endpoint_url": None}, "Object storage is not configured"),
 ])
 def test_unsafe_production_configuration_refuses_to_start(override, expected):
     config = Settings(**{**PRODUCTION_SAFE, **override})
@@ -65,13 +74,15 @@ def test_all_problems_are_reported_at_once():
         supabase_url=None,
         supabase_jwt_secret=None,
         allow_insecure_header_auth=True,
+        r2_bucket=None,
     )
     with pytest.raises(ConfigurationError) as excinfo:
         validate_production_settings(config)
 
     message = str(excinfo.value)
     for expected in ["STORAGE_ENCRYPTION_KEY", "DATABASE_URL", "DEBUG",
-                     "CORS_ORIGINS", "ALLOW_INSECURE_HEADER_AUTH", "Supabase"]:
+                     "CORS_ORIGINS", "ALLOW_INSECURE_HEADER_AUTH", "Supabase",
+                     "Object storage"]:
         assert expected in message
 
 

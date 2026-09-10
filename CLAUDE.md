@@ -121,10 +121,16 @@ directory, so a relative `.env` was silently ignored when the app started from
 Unset, the app uses a per-process ephemeral key and data becomes unreadable at
 the next restart. `ENVIRONMENT=production` refuses to boot without it.
 
+**Storage encryption sits above the backend**, in `storage.save`/`load`, so
+local and R2 carry the identical §5 guarantee. Do not push it down into R2's
+server-side encryption — that would put a readable key in Cloudflare's hands.
+`Dataset.storage_path` holds a *key* (`datasets/<id>.csv.enc`), not a
+filesystem path; the local backend still honours absolute paths as a migration
+shim for rows written before R2.
+
 ## Not implemented, deliberately
 
-Storage is a container filesystem and does not survive a redeploy (§7 specifies
-Cloudflare R2; `app/storage.py`'s save/load/delete is the seam). İyzico returns
+İyzico returns
 `pending` without granting credits rather than faking a payment. The LLM path
 has only ever run against mocks. Everything in §9 is out of scope.
 

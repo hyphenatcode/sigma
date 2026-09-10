@@ -206,6 +206,9 @@ all need a real container.
 | `STORAGE_ENCRYPTION_KEY` | `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
 | `SUPABASE_URL` | `https://<ref>.supabase.co` |
 | `SUPABASE_JWT_SECRET` | only for legacy HS256 projects |
+| `R2_ACCOUNT_ID` | Cloudflare → R2 → account id |
+| `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | an R2 API token with Object Read & Write |
+| `R2_BUCKET` | the bucket name |
 | `ENVIRONMENT` | `production` |
 | `CORS_ORIGINS` | `["https://your-app.vercel.app"]` |
 | `RUN_MIGRATIONS` | `1` while single-instance; use a release step once you scale |
@@ -231,19 +234,32 @@ routing table. Unset, the deployed site would send every request to
 
 **Not yet production-ready**, in order of severity:
 
-1. **Storage is a container filesystem.** Uploaded datasets and generated
-   reports do not survive a redeploy — fine for a smoke test you drive
-   yourself, not for anyone with a real thesis. §7 specifies Cloudflare R2;
-   `app/storage.py`'s save/load/delete interface is the seam. Do this before
-   anyone else uses it.
-2. **The storage key has no rotation path**, and losing it loses every dataset.
-3. **The LLM path has only ever run against mocks.** Before trusting it, run
+1. **The storage key has no rotation path**, and losing it loses every dataset.
+2. **The LLM path has only ever run against mocks.** Before trusting it, run
    `scripts/verify_reference_datasets.py --llm` with a real key and read the
    output — the pass rate through the §3.6 validator is currently unknown.
-4. **İyzico is unwired**, so users hit HTTP 402 after their one free analysis.
-5. **Supabase verification has not been exercised against a real project.**
-   The logic is tested against locally minted tokens and both signing schemes,
-   but no live project has issued a token to it.
+3. **İyzico is unwired**, so users hit HTTP 402 after their one free analysis.
+4. **Neither Supabase nor R2 has been exercised against the real service.**
+   Both are tested hard — Supabase against locally minted tokens covering both
+   signing schemes, R2 against `moto`'s real S3 semantics — but no live project
+   or bucket has answered a request.
+
+## Storage
+
+Uploaded datasets are Fernet-encrypted before they leave the process and
+decrypted only in memory (§5 KVKK). Encryption sits *above* the backend, so it
+holds identically wherever bytes land — R2's own server-side encryption is a
+second layer, not a substitute, since delegating to it would mean Cloudflare
+holds a key that reads respondent data.
+
+Configure R2 and it is used automatically; leave it unset and uploads go to the
+local filesystem, which is fine for development and fatal in production, so
+`ENVIRONMENT=production` refuses to start without it. Half-configured R2 counts
+as unconfigured rather than silently falling back.
+
+Generated reports are stored unencrypted — they contain only aggregates — and
+streamed through the ownership-checked download endpoint rather than served
+from a presigned URL, which would hand out access that bypasses that check.
 
 ## Authentication
 

@@ -67,6 +67,18 @@ class Settings(BaseSettings):
     #: after a restart.
     storage_encryption_key: Optional[str] = None
 
+    # --- Object storage (§7: Cloudflare R2) ---------------------------------
+    #: Setting all four switches storage from the local filesystem to R2. A
+    #: container filesystem does not survive a redeploy, so production requires
+    #: this (see validate_production_settings).
+    r2_account_id: Optional[str] = None
+    r2_access_key_id: Optional[str] = None
+    r2_secret_access_key: Optional[str] = None
+    r2_bucket: Optional[str] = None
+    #: Overrides the endpoint derived from the account id — for S3-compatible
+    #: stores that are not R2, or a local MinIO during development.
+    r2_endpoint_url: Optional[str] = None
+
     # --- Auth (§7: Supabase) ------------------------------------------------
     #: Project URL, e.g. https://abcdefgh.supabase.co. Used to derive both the
     #: JWKS endpoint and the expected issuer, so it is the only value most
@@ -119,6 +131,38 @@ class Settings(BaseSettings):
         return f"{self.supabase_url.rstrip('/')}/auth/v1"
 
     @property
+    def resolved_r2_endpoint(self) -> Optional[str]:
+        if self.r2_endpoint_url:
+            return self.r2_endpoint_url
+        if self.r2_account_id:
+            return f"https://{self.r2_account_id}.r2.cloudflarestorage.com"
+        return None
+
+    @property
+    def r2_configured(self) -> bool:
+        """R2 needs credentials, a bucket and somewhere to send them.
+
+        All-or-nothing on purpose: a half-configured R2 would otherwise fall
+        back to the local filesystem silently, which is the failure this whole
+        change exists to remove.
+        """
+        return all([
+            self.r2_access_key_id,
+            self.r2_secret_access_key,
+            self.r2_bucket,
+            self.resolved_r2_endpoint,
+        ])
+
+    @property
+    def r2_partially_configured(self) -> bool:
+        """Some R2 settings present but not enough to use it."""
+        provided = [
+            self.r2_account_id, self.r2_access_key_id,
+            self.r2_secret_access_key, self.r2_bucket, self.r2_endpoint_url,
+        ]
+        return any(provided) and not self.r2_configured
+
+    @property
     def auth_configured(self) -> bool:
         return bool(self.supabase_jwt_secret or self.resolved_jwks_url)
 
@@ -169,6 +213,13 @@ def validate_production_settings(config: "Settings | None" = None) -> None:
         problems.append(
             f"CORS_ORIGINS still contains development origins: "
             f"{', '.join(localhost_origins)}."
+        )
+    if not config.r2_configured:
+        problems.append(
+            "Object storage is not configured (§7: Cloudflare R2). Uploaded "
+            "datasets and generated reports would be written to the container "
+            "filesystem and lost on the next redeploy. Set R2_ACCOUNT_ID, "
+            "R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_BUCKET."
         )
     if config.allow_insecure_header_auth:
         problems.append(
