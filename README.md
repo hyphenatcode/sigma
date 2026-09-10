@@ -182,11 +182,60 @@ verification, the frontend typecheck and build, and builds the image — then
 renders a PDF inside it, because a missing native library only shows up at
 render time.
 
+### Deploy runbook (Supabase + Railway + Vercel)
+
+Two deploys: the container to Railway, `frontend/` to Vercel. Vercel cannot
+host the backend — WeasyPrint's native stack, synchronous analyses and Alembic
+all need a real container.
+
+**1. Supabase.** Create a project. Then:
+- **Auth → Providers → Email**: turn **Confirm email on**. §3.10's free tier
+  reads `email_verified`; with confirmation off it is always false and nobody
+  qualifies.
+- **Auth → URL Configuration → Redirect URLs**: add your Vercel domain, or
+  magic links bounce.
+- Collect: the project URL, the `anon` key, and — only if the project still
+  signs with the legacy symmetric secret — the JWT secret.
+
+**2. Railway.** Point it at this repo; it builds `Dockerfile` (see
+`railway.json`). Set:
+
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | Supabase → Connect → **Session pooler** or direct connection |
+| `STORAGE_ENCRYPTION_KEY` | `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+| `SUPABASE_URL` | `https://<ref>.supabase.co` |
+| `SUPABASE_JWT_SECRET` | only for legacy HS256 projects |
+| `ENVIRONMENT` | `production` |
+| `CORS_ORIGINS` | `["https://your-app.vercel.app"]` |
+| `RUN_MIGRATIONS` | `1` while single-instance; use a release step once you scale |
+
+Do **not** use Supabase's transaction pooler: pgBouncer in transaction mode
+breaks Alembic's DDL and prepared statements. `ENVIRONMENT=production` refuses
+to boot if any of the above is missing or still at a development value, so a
+misconfigured deploy fails loudly at startup instead of quietly at first use.
+
+**3. Vercel.** Import the repo and set **Root Directory to `frontend`** — it is
+a monorepo and the build will not find `package.json` otherwise. Then:
+
+| Variable | Value |
+|---|---|
+| `SIGMA_API_URL` | the Railway public URL |
+| `NEXT_PUBLIC_SUPABASE_URL` | `https://<ref>.supabase.co` |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | the anon key |
+
+`SIGMA_API_URL` is read at **build** time — the API proxy is compiled into the
+routing table. Unset, the deployed site would send every request to
+`localhost:8000` and fail for every visitor, with no error anywhere.
+`next.config.mjs` fails the Vercel build instead.
+
 **Not yet production-ready**, in order of severity:
 
-1. **Storage is a container filesystem.** It does not survive a redeploy.
-   §7 specifies Cloudflare R2; `app/storage.py`'s save/load/delete interface is
-   the seam.
+1. **Storage is a container filesystem.** Uploaded datasets and generated
+   reports do not survive a redeploy — fine for a smoke test you drive
+   yourself, not for anyone with a real thesis. §7 specifies Cloudflare R2;
+   `app/storage.py`'s save/load/delete interface is the seam. Do this before
+   anyone else uses it.
 2. **The storage key has no rotation path**, and losing it loses every dataset.
 3. **The LLM path has only ever run against mocks.** Before trusting it, run
    `scripts/verify_reference_datasets.py --llm` with a real key and read the

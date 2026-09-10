@@ -6,6 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +33,22 @@ class Settings(BaseSettings):
 
     # PostgreSQL (§7). SQLite is allowed only for local test runs.
     database_url: str = "postgresql+psycopg2://sigma:sigma@localhost:5432/sigma"
+
+    @field_validator("database_url")
+    @classmethod
+    def _normalise_database_url(cls, value: str) -> str:
+        """Accept the connection strings hosting dashboards actually hand out.
+
+        Supabase and Railway show `postgresql://...`, which SQLAlchemy resolves
+        to psycopg2 on its own. Some platforms still emit the older
+        `postgres://`, which SQLAlchemy rejects with `NoSuchModuleError:
+        Can't load plugin: sqlalchemy.dialects:postgres` — an error that says
+        nothing about the real problem, at a moment (first boot after deploy)
+        when it is least welcome. Rewrite it rather than make someone decode it.
+        """
+        if value.startswith("postgres://"):
+            return "postgresql+psycopg2://" + value[len("postgres://"):]
+        return value
 
     # §3.6 LLM layer — optional by design: without a key the deterministic
     # template path is used and the product still works.

@@ -117,3 +117,34 @@ def test_insecure_header_auth_defaults_to_off():
 def test_debug_defaults_to_off():
     """A deployment that forgets to set DEBUG gets the safe behaviour."""
     assert Settings(_env_file=None).debug is False
+
+
+# ---------------------------------------------------------------------------
+# Connection strings as hosting dashboards actually present them
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("given,expected_driver", [
+    # Supabase and Railway both show this form; SQLAlchemy resolves it itself.
+    ("postgresql://postgres:pw@db.abcdefgh.supabase.co:5432/postgres", "psycopg2"),
+    ("postgresql://u:pw@aws-0-eu-central-1.pooler.supabase.com:5432/postgres", "psycopg2"),
+    # Some platforms still emit the older scheme, which SQLAlchemy rejects with
+    # "Can't load plugin: sqlalchemy.dialects:postgres" — an error that says
+    # nothing useful, on first boot after a deploy.
+    ("postgres://u:pw@host:5432/db", "psycopg2"),
+    ("postgresql+psycopg2://sigma:sigma@localhost:5432/sigma", "psycopg2"),
+])
+def test_platform_connection_strings_are_usable(given, expected_driver):
+    from sqlalchemy import create_engine
+
+    url = Settings(database_url=given, _env_file=None).database_url
+    assert create_engine(url).dialect.driver == expected_driver
+
+
+def test_legacy_postgres_scheme_is_rewritten_without_touching_credentials():
+    config = Settings(
+        database_url="postgres://user:p%40ss@host.example:5432/db?sslmode=require",
+        _env_file=None,
+    )
+    assert config.database_url == (
+        "postgresql+psycopg2://user:p%40ss@host.example:5432/db?sslmode=require"
+    )
