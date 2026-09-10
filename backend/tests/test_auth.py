@@ -41,8 +41,17 @@ def ec_key():
 
 @pytest.fixture
 def jwks(ec_key):
+    """A key set shaped like the one Supabase actually serves.
+
+    `ext` and `key_ops` are WebCrypto fields a real project's JWKS carries and
+    PyJWT's `to_jwk` does not emit; they are added here so the shape under test
+    is the shape in production, verified against a live project's endpoint.
+    """
     key = json.loads(ECAlgorithm.to_jwk(ec_key.public_key()))
-    key.update({"kid": KID, "use": "sig", "alg": "ES256"})
+    key.update({
+        "kid": KID, "use": "sig", "alg": "ES256",
+        "ext": True, "key_ops": ["verify"],
+    })
     return {"keys": [key]}
 
 
@@ -328,6 +337,47 @@ def test_user_facing_message_does_not_reveal_which_check_failed():
         except AuthError as exc:
             messages.add(exc.message_tr)
     assert messages == {"Oturum doğrulanamadı."}
+
+
+def test_real_supabase_key_set_shape_is_handled(monkeypatch):
+    """Parsed from a live project's JWKS endpoint.
+
+    Only the public key is here — a JWKS is public by design. What this pins is
+    that PyJWT tolerates the extra WebCrypto fields, that `algorithm_name`
+    resolves from the JWK's own `alg`, and that the key is selected by kid.
+    """
+    from jwt import PyJWKSet
+
+    served = {
+        "keys": [{
+            "alg": "ES256", "crv": "P-256", "ext": True, "key_ops": ["verify"],
+            "kid": "5782a796-d619-44a9-a431-e19013d99fdb", "kty": "EC", "use": "sig",
+            "x": "qzlWygSVbB_XruBnnQ4LVtPLlHYIjfTlFviMeAcwvY0",
+            "y": "tZDwsGBla5uw2wJ0YbCTA8JwkDaNTL3EV9R9uCBae-Y",
+        }]
+    }
+
+    class _Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return served
+
+    monkeypatch.setattr("app.auth.httpx.get", lambda *a, **k: _Response())
+    verifier = SupabaseTokenVerifier(Settings(
+        supabase_url="https://bwhdomhrjyfduimxtoqw.supabase.co",
+        supabase_jwt_secret=None, _env_file=None))
+
+    kid = served["keys"][0]["kid"]
+    key, algorithms = verifier._key_for({"alg": "ES256", "kid": kid})
+    assert algorithms == ["ES256"]          # pinned from the JWK, not the header
+    assert key.__class__.__name__ == "ECPublicKey"
+
+    # A project on asymmetric keys has no symmetric secret, so the HS256 branch
+    # is closed twice over.
+    with pytest.raises(AuthError):
+        verifier._key_for({"alg": "HS256", "kid": kid})
 
 
 def test_verifier_reports_whether_it_is_configured():

@@ -205,7 +205,7 @@ all need a real container.
 | `DATABASE_URL` | Supabase → Connect → **Session pooler** or direct connection |
 | `STORAGE_ENCRYPTION_KEY` | `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
 | `SUPABASE_URL` | `https://<ref>.supabase.co` |
-| `SUPABASE_JWT_SECRET` | only for legacy HS256 projects |
+| `SUPABASE_JWT_SECRET` | only for legacy HS256 projects — omit on projects using asymmetric signing keys |
 | `R2_ACCOUNT_ID` | Cloudflare → R2 → account id |
 | `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | an R2 API token with Object Read & Write |
 | `R2_BUCKET` | the bucket name |
@@ -270,7 +270,9 @@ key fetched from the project's JWKS endpoint and cached.
 
 Set `SUPABASE_URL` (the JWKS endpoint and the expected issuer are derived from
 it) plus `SUPABASE_JWT_SECRET` if the project still signs with the legacy
-secret. The frontend needs `NEXT_PUBLIC_SUPABASE_URL` and
+secret. To tell which, open
+`<project-url>/auth/v1/.well-known/jwks.json` — a non-empty `keys` array means
+asymmetric signing and no secret is needed; an empty one means legacy HS256. The frontend needs `NEXT_PUBLIC_SUPABASE_URL` and
 `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and signs users in with a magic link — which
 doubles as the email verification §3.10 wants for the free tier.
 
