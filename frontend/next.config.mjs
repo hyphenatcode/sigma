@@ -5,7 +5,15 @@
 // at runtime. Get that wrong on Vercel and the deployed site proxies /api/* to
 // http://localhost:8000 for every visitor: no build error, no runtime error,
 // just a site where nothing works. Fail the build instead.
-const apiUrl = process.env.SIGMA_API_URL ?? "http://localhost:8000";
+// Trailing slashes are stripped because the destination below is built by
+// concatenation: a dashboard value pasted as "https://host/" would otherwise
+// proxy every request to "https://host//api/...", which is a path no route
+// matches. Hosting dashboards copy URLs with the slash attached, so this is
+// the normal way to get it wrong, not an exotic one.
+const apiUrl = (process.env.SIGMA_API_URL ?? "http://localhost:8000").replace(
+  /\/+$/,
+  "",
+);
 const isLocal = apiUrl.includes("localhost") || apiUrl.includes("127.0.0.1");
 
 // VERCEL is set on every Vercel build; VERCEL_ENV is "production" | "preview"
