@@ -45,6 +45,32 @@ export async function signInWithEmail(email: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+/**
+ * Google sign-in (§7).
+ *
+ * A second route in, so email deliverability is not a single point of failure
+ * for all authentication — an SMTP outage or a spent rate limit would
+ * otherwise lock out every user.
+ *
+ * The client uses the implicit flow (the default for supabase-js in the
+ * browser), so Supabase hands the session back in the URL fragment and
+ * `detectSessionInUrl` picks it up. That is why there is no /auth/callback
+ * route to maintain.
+ *
+ * Nothing changes on the backend: the token is still minted by the same
+ * Supabase project, with the same issuer and audience, and `app/auth.py`
+ * verifies it exactly as it verifies a magic-link token.
+ */
+export async function signInWithGoogle(): Promise<void> {
+  if (!supabase) throw new Error("Supabase yapılandırılmamış.");
+  // On success the browser navigates away, so this resolves only on failure.
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: { redirectTo: window.location.origin },
+  });
+  if (error) throw new Error(error.message);
+}
+
 export async function signOut(): Promise<void> {
   await supabase?.auth.signOut();
 }
